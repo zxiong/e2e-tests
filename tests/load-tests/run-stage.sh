@@ -4,6 +4,7 @@ go run loadtest.go \
     --build-pipeline-selector-bundle "${BUILD_PIPELINE_SELECTOR_BUNDLE:-}" \
     --component-repo "${COMPONENT_REPO:-https://github.com/devfile-samples/devfile-sample-code-with-quarkus}" \
     --component-repo-revision "${COMPONENT_REPO_REVISION:-main}" \
+    --component-repo-container-file "${COMPONENT_REPO_CONTAINER_FILE:-Dockerfile}" \
     --components-count "${COMPONENTS_COUNT:-1}" \
     --concurrency "${CONCURRENCY:-1}" \
     --journey-duration "${JOURNEY_DURATION:-1h}" \
