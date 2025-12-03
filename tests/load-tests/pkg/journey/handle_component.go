@@ -84,7 +84,7 @@ func getPaCPull(annotations map[string]string) (string, error) {
 	}
 }
 
-func createComponent(f *framework.Framework, namespace, repoUrl, repoRevision, containerContext, containerFile, buildPipelineSelector, appName string, componentIndex int, mintmakerDisabled bool) (string, error) {
+func createComponent(f *framework.Framework, namespace, repoUrl, repoRevision, containerContext, containerFile, buildPipelineName, buildPipelineSelector, appName string, componentIndex int, mintmakerDisabled bool) (string, error) {
 	name := fmt.Sprintf("%s-comp-%d", appName, componentIndex)
 
 	logging.Logger.Debug("Creating component %s in namespace %s", name, namespace)
@@ -93,7 +93,7 @@ func createComponent(f *framework.Framework, namespace, repoUrl, repoRevision, c
 	annotationsMap := constants.DefaultDockerBuildPipelineBundleAnnotation
 	if buildPipelineSelector != "" {
 		// Custom build pipeline selector
-		annotationsMap["build.appstudio.openshift.io/pipeline"] = fmt.Sprintf(`{"name": "docker-build", "bundle": "%s"}`, buildPipelineSelector)
+		annotationsMap["build.appstudio.openshift.io/pipeline"] = fmt.Sprintf(`{"name": "%s", "bundle": "%s"}`, buildPipelineName, buildPipelineSelector)
 	}
 	if mintmakerDisabled {
 		// Stop Mintmaker creating update PRs for your component
@@ -380,6 +380,7 @@ func HandleComponent(ctx *types.PerComponentContext) error {
 		ctx.ParentContext.ParentContext.Opts.ComponentRepoRevision,
 		ctx.ParentContext.ParentContext.Opts.ComponentContainerContext,
 		ctx.ParentContext.ParentContext.Opts.ComponentContainerFile,
+		ctx.ParentContext.ParentContext.Opts.BuildPipelineName,
 		ctx.ParentContext.ParentContext.Opts.BuildPipelineSelectorBundle,
 		ctx.ParentContext.ApplicationName,
 		ctx.ComponentIndex,
@@ -443,18 +444,127 @@ func HandleComponent(ctx *types.PerComponentContext) error {
 		return logging.Logger.Fail(66, "Type assertion failed on pull: %+v", iface)
 	}
 
+	// When not using repo templating, always merge PR and use only on-push PipelineRun
+	if !ctx.ParentContext.ParentContext.Opts.PipelineRepoTemplating {
+		// Step 1: Optionally inject build-platforms if provided
+		if ctx.ParentContext.ParentContext.Opts.BuildPlatforms != "" {
+			logging.Logger.Debug("Injecting build-platforms parameter into PipelineRun YAML files for PR #%d", mergeRequestNumber)
+			err = InjectBuildPlatformsToYaml(
+				ctx.Framework,
+				ctx.ParentContext.ParentContext.ComponentRepoUrl,
+				ctx.ParentContext.ParentContext.Opts.ComponentRepoRevision,
+				ctx.ComponentName,
+				ctx.ParentContext.ParentContext.Opts.BuildPlatforms,
+				mergeRequestNumber,
+			)
+			if err != nil {
+				return logging.Logger.Fail(68, "Failed to inject build-platforms into PipelineRun: %v", err)
+			}
+		} else {
+			logging.Logger.Debug("No build-platforms specified, will merge PR #%d with default pipeline configuration", mergeRequestNumber)
+		}
+
+		// Step 2: First cleanup - delete initial on-pull-request PipelineRuns
+		logging.Logger.Debug("Deleting initial on-pull-request PipelineRuns before merging PR")
+		err = listAndDeletePipelineRunsWithTimeout(
+			ctx.Framework,
+			ctx.ParentContext.ParentContext.Namespace,
+			ctx.ParentContext.ApplicationName,
+			ctx.ComponentName,
+			"", // empty sha means get all PipelineRuns for this component
+			1,  // expect at least 1 PipelineRun
+		)
+		if err != nil {
+			return logging.Logger.Fail(69, "Failed to delete initial PipelineRuns: %v", err)
+		}
+
+		// Step 3: Merge PR to trigger on-push PipelineRun
+		// Add initial wait to give GitHub/GitLab time to process injection commits
+		initialWait := time.Second * 15
+		logging.Logger.Debug("Waiting %v for GitHub/GitLab to process injection commits before attempting merge", initialWait)
+		time.Sleep(initialWait)
+
+		// Retry merge with backoff to handle GitHub/GitLab processing time after injection commits
+		logging.Logger.Debug("Merging PR %d to trigger on-push PipelineRun (with retry for processing time)", mergeRequestNumber)
+
+		maxRetries := 5
+		retryDelay := time.Second * 10
+		var mergeErr error
+
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			if attempt > 1 {
+				logging.Logger.Debug("Merge attempt %d/%d (waiting %v for PR to become mergeable)", attempt, maxRetries, retryDelay)
+				time.Sleep(retryDelay)
+			}
+
+			if strings.Contains(ctx.ParentContext.ParentContext.ComponentRepoUrl, "gitlab.") {
+				repoId, err := getRepoIdFromRepoUrl(ctx.ParentContext.ParentContext.ComponentRepoUrl)
+				if err != nil {
+					return logging.Logger.Fail(70, "Failed parsing repo org/name: %v", err)
+				}
+				_, mergeErr = ctx.Framework.AsKubeAdmin.CommonController.Gitlab.AcceptMergeRequest(repoId, mergeRequestNumber)
+			} else {
+				repoName, err := getRepoNameFromRepoUrl(ctx.ParentContext.ParentContext.ComponentRepoUrl)
+				if err != nil {
+					return logging.Logger.Fail(72, "Failed parsing repo name: %v", err)
+				}
+				_, mergeErr = ctx.Framework.AsKubeAdmin.CommonController.Github.MergePullRequest(repoName, mergeRequestNumber)
+			}
+
+			if mergeErr == nil {
+				logging.Logger.Debug("PR %d merged successfully on attempt %d", mergeRequestNumber, attempt)
+				break
+			}
+
+			// Check if error is retryable (405 "not mergeable", 409 "out of date", or similar)
+			if strings.Contains(mergeErr.Error(), "405") || strings.Contains(mergeErr.Error(), "not mergeable") ||
+				strings.Contains(mergeErr.Error(), "409") || strings.Contains(mergeErr.Error(), "out of date") {
+				logging.Logger.Debug("PR %d not ready to merge yet (attempt %d/%d): %v", mergeRequestNumber, attempt, maxRetries, mergeErr)
+				if attempt == maxRetries {
+					return logging.Logger.Fail(73, "Failed to merge PR %d after %d attempts: %v", mergeRequestNumber, maxRetries, mergeErr)
+				}
+				// Continue to retry
+			} else {
+				// Non-retryable error, fail immediately
+				return logging.Logger.Fail(73, "Failed to merge PR %d with non-retryable error: %v", mergeRequestNumber, mergeErr)
+			}
+		}
+
+		logging.Logger.Debug("PR merged successfully, on-push PipelineRun triggered. Now cleaning up cancelled on-pull-request PipelineRuns")
+
+		// Step 4: Second cleanup - delete all cancelled on-pull-request PipelineRuns after merge
+		// This removes any on-pull-request PipelineRuns (from injection commits or still running)
+		// keeping only the new on-push PipelineRun
+		err = listAndDeletePipelineRunsWithTimeout(
+			ctx.Framework,
+			ctx.ParentContext.ParentContext.Namespace,
+			ctx.ParentContext.ApplicationName,
+			ctx.ComponentName,
+			"", // empty sha means get all PipelineRuns for this component
+			1,  // expect at least 1 cancelled on-pull-request PipelineRun
+		)
+		if err != nil {
+			logging.Logger.Debug("Second cleanup after merge had no PipelineRuns to delete (this is OK): %v", err)
+		} else {
+			logging.Logger.Debug("Cleaned up cancelled on-pull-request PipelineRuns after merge for %s/%s/%s", ctx.ParentContext.ParentContext.Namespace, ctx.ParentContext.ApplicationName, ctx.ComponentName)
+		}
+
+		logging.Logger.Debug("Ready to proceed - only on-push PipelineRun should remain")
+	}
+
 	// If this is supposed to be a multi-arch build, we do not care about
 	// current build, we just merge the PR, update pipelines and trigger
 	// actual multi-arch build
 	if ctx.ParentContext.ParentContext.Opts.PipelineRepoTemplating {
 		// Placeholders for template multi-arch PaC pipeline files
 		placeholders := &map[string]string{
-			"NAMESPACE":   ctx.ParentContext.ParentContext.Namespace,
-			"QUAY_REPO":   ctx.ParentContext.ParentContext.Opts.QuayRepo,
-			"APPLICATION": ctx.ParentContext.ApplicationName,
-			"COMPONENT":   ctx.ComponentName,
-			"BRANCH":      ctx.ParentContext.ParentContext.Opts.ComponentRepoRevision,
-			"REPOURL":     ctx.ParentContext.ParentContext.ComponentRepoUrl,
+			"NAMESPACE":       ctx.ParentContext.ParentContext.Namespace,
+			"QUAY_REPO":       ctx.ParentContext.ParentContext.Opts.QuayRepo,
+			"APPLICATION":     ctx.ParentContext.ApplicationName,
+			"COMPONENT":       ctx.ComponentName,
+			"BRANCH":          ctx.ParentContext.ParentContext.Opts.ComponentRepoRevision,
+			"REPOURL":         ctx.ParentContext.ParentContext.ComponentRepoUrl,
+			"BUILD_PLATFORMS": ctx.ParentContext.ParentContext.Opts.BuildPlatforms,
 		}
 
 		// Skip what we do not care about, merge PR, graft pipeline yamls

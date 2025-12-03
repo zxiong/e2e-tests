@@ -11,6 +11,7 @@ import types "github.com/konflux-ci/e2e-tests/tests/load-tests/pkg/types"
 import framework "github.com/konflux-ci/e2e-tests/pkg/framework"
 import github "github.com/google/go-github/v44/github"
 import utils "github.com/konflux-ci/e2e-tests/pkg/utils"
+import "sigs.k8s.io/yaml"
 
 var fileList = []string{"COMPONENT-pull-request.yaml", "COMPONENT-push.yaml"}
 
@@ -296,6 +297,138 @@ func doHarmlessCommit(f *framework.Framework, repoUrl, repoRevision string) (str
 		}
 	}
 	return commitSha, nil
+}
+
+// Add build-platforms parameter to PipelineRun YAML file
+func addBuildPlatformsToPipelineRun(fileContent, buildPlatforms string) (string, error) {
+	if buildPlatforms == "" {
+		return fileContent, nil
+	}
+
+	// Parse YAML into a map
+	var pipelineRun map[string]interface{}
+	if err := yaml.Unmarshal([]byte(fileContent), &pipelineRun); err != nil {
+		return "", fmt.Errorf("failed to parse PipelineRun YAML: %v", err)
+	}
+
+	// Navigate to spec.params
+	spec, ok := pipelineRun["spec"].(map[string]interface{})
+	if !ok {
+		logging.Logger.Debug("No 'spec' section found in PipelineRun YAML")
+		return fileContent, nil
+	}
+
+	params, ok := spec["params"].([]interface{})
+	if !ok {
+		logging.Logger.Debug("No 'params' section found in spec")
+		return fileContent, nil
+	}
+
+	// Split platforms by comma and trim whitespace
+	platformList := strings.Split(buildPlatforms, ",")
+	platforms := make([]interface{}, len(platformList))
+	for i := range platformList {
+		platforms[i] = strings.TrimSpace(platformList[i])
+	}
+
+	// Check if build-platforms already exists and update it, or add new parameter
+	found := false
+	for _, param := range params {
+		if paramMap, ok := param.(map[string]interface{}); ok {
+			if name, ok := paramMap["name"].(string); ok && name == "build-platforms" {
+				// Update existing build-platforms parameter
+				paramMap["value"] = platforms
+				found = true
+				logging.Logger.Debug("Updated existing build-platforms parameter in PipelineRun YAML")
+				break
+			}
+		}
+	}
+
+	// If not found, add to the beginning of params array
+	if !found {
+		buildPlatformsParam := map[string]interface{}{
+			"name":  "build-platforms",
+			"value": platforms,
+		}
+		spec["params"] = append([]interface{}{buildPlatformsParam}, params...)
+		logging.Logger.Debug("Added new build-platforms parameter to PipelineRun YAML")
+	}
+
+	// Marshal back to YAML
+	modifiedYAML, err := yaml.Marshal(pipelineRun)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal modified PipelineRun YAML: %v", err)
+	}
+
+	return string(modifiedYAML), nil
+}
+
+// Inject build-platforms parameter into PR's PipelineRun files
+func InjectBuildPlatformsToYaml(f *framework.Framework, repoUrl, repoRevision, componentName, buildPlatforms string, prNumber int) error {
+	if buildPlatforms == "" {
+		return nil
+	}
+
+	// Get PR details to find the source branch where PaC files actually exist
+	repoName, err := getRepoNameFromRepoUrl(repoUrl)
+	if err != nil {
+		return fmt.Errorf("Failed to parse repo name: %v", err)
+	}
+	repoOrgName, err := getRepoOrgFromRepoUrl(repoUrl)
+	if err != nil {
+		return fmt.Errorf("Failed to parse repo org: %v", err)
+	}
+
+	var prBranch string
+	if strings.Contains(repoUrl, "gitlab.") {
+		// For GitLab, get merge request details using client directly
+		mr, _, err := f.AsKubeAdmin.CommonController.Gitlab.GetClient().MergeRequests.GetMergeRequest(repoOrgName+"/"+repoName, prNumber, nil)
+		if err != nil {
+			return fmt.Errorf("Failed to get GitLab MR %d: %v", prNumber, err)
+		}
+		prBranch = mr.SourceBranch
+	} else {
+		// For GitHub, get PR details to find the branch with PaC files
+		pr, err := f.AsKubeAdmin.CommonController.Github.GetPullRequest(repoName, prNumber)
+		if err != nil {
+			return fmt.Errorf("Failed to get GitHub PR %d from repo %s: %v", prNumber, repoName, err)
+		}
+		prBranch = pr.Head.GetRef()
+	}
+
+	logging.Logger.Debug("Found PR #%d source branch: %s (PaC files exist here, not in %s)", prNumber, prBranch, repoRevision)
+
+	// Files to modify
+	pullRequestFile := ".tekton/" + componentName + "-pull-request.yaml"
+	pushFile := ".tekton/" + componentName + "-push.yaml"
+
+	files := []string{pullRequestFile, pushFile}
+
+	for _, fileName := range files {
+		// Get current file content from PR branch (where files actually exist)
+		fileContent, err := getRepoFileContent(f, repoUrl, prBranch, fileName)
+		if err != nil {
+			logging.Logger.Debug("Could not get file %s from branch %s, skipping: %v", fileName, prBranch, err)
+			continue
+		}
+
+		// Add build-platforms parameter
+		modifiedContent, err := addBuildPlatformsToPipelineRun(fileContent, buildPlatforms)
+		if err != nil {
+			return fmt.Errorf("Failed to add build-platforms to %s: %v", fileName, err)
+		}
+
+		// Update file in PR branch
+		_, err = updateRepoFileContent(f, repoUrl, prBranch, fileName, modifiedContent)
+		if err != nil {
+			return fmt.Errorf("Failed to update file %s in branch %s: %v", fileName, prBranch, err)
+		}
+
+		logging.Logger.Debug("Successfully injected build-platforms into %s on branch %s", fileName, prBranch)
+	}
+
+	return nil
 }
 
 func HandleRepoForking(ctx *types.PerUserContext) error {

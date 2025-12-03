@@ -20,7 +20,6 @@ fi
 date -Ins --utc >started
 $cmd \
     --applications-count "${APPLICATIONS_COUNT:-1}" \
-    --build-pipeline-selector-bundle "${BUILD_PIPELINE_SELECTOR_BUNDLE:-}" \
     --component-repo "${COMPONENT_REPO:-https://github.com/devfile-samples/devfile-sample-code-with-quarkus}" \
     --component-repo-revision "${COMPONENT_REPO_REVISION:-main}" \
     --components-count "${COMPONENTS_COUNT:-1}" \
@@ -28,10 +27,13 @@ $cmd \
     --fork-target "${FORK_TARGET:-}" \
     --journey-duration "${JOURNEY_DURATION:-1h}" \
     --journey-repeats "${JOURNEY_REPEATS:-1}" \
-    --log-"${LOGGING_LEVEL:-info}" \
+    --log-${LOGGING_LEVEL:-info} \
+    --build-pipeline-name "${BUILD_PIPELINE_NAME:-docker-build-multi-platform-oci-ta}" \
+    --build-pipeline-selector-bundle "${BUILD_PIPELINE_SELECTOR_BUNDLE:-latest}" \
+    --build-platforms "${BUILD_PLATFORMS:-linux/amd64,linux/arm64}" \
     --pipeline-repo-templating="${PIPELINE_REPO_TEMPLATING:-false}" \
-    --pipeline-repo-templating-source="${PIPELINE_REPO_TEMPLATING_SOURCE:-}" \
-    --pipeline-repo-templating-source-dir="${PIPELINE_REPO_TEMPLATING_SOURCE_DIR:-}" \
+    --pipeline-repo-templating-source "${PIPELINE_REPO_TEMPLATING_SOURCE:-}" \
+    --pipeline-repo-templating-source-dir "${PIPELINE_REPO_TEMPLATING_SOURCE_DIR:-}" \
     --output-dir "${OUTPUT_DIR:-.}" \
     --purge="${PURGE:-true}" \
     --quay-repo "${QUAY_REPO:-redhat-user-workloads-stage}" \

@@ -71,7 +71,9 @@ func init() {
 	rootCmd.Flags().StringVar(&opts.PipelineRepoTemplatingSourceDir, "pipeline-repo-templating-source-dir", "", "when templating from additional repository, take template source files from this directory (\"\" means default \".template/\" will ne used)")
 	rootCmd.Flags().StringArrayVar(&opts.PipelineImagePullSecrets, "pipeline-image-pull-secrets", []string{}, "secret needed to pull task images, can be used multiple times")
 	rootCmd.Flags().StringVarP(&opts.OutputDir, "output-dir", "o", ".", "directory where output files such as load-tests.log or load-tests.json are stored")
+	rootCmd.Flags().StringVar(&opts.BuildPipelineName, "build-pipeline-name", "docker-build", "BuildPipeline name to use in pipeline annotation (defaults to \"docker-build\")")
 	rootCmd.Flags().StringVar(&opts.BuildPipelineSelectorBundle, "build-pipeline-selector-bundle", "", "BuildPipelineSelector bundle to use when testing with build-definition PR")
+	rootCmd.Flags().StringVar(&opts.BuildPlatforms, "build-platforms", "", "Platforms to build for (e.g., \"linux/amd64,linux/arm64\"), added as parameter to PipelineRun")
 	rootCmd.Flags().BoolVarP(&opts.LogInfo, "log-info", "v", false, "log messages with info level and above")
 	rootCmd.Flags().BoolVarP(&opts.LogDebug, "log-debug", "d", false, "log messages with debug level and above")
 	rootCmd.Flags().BoolVarP(&opts.LogTrace, "log-trace", "t", false, "log messages with trace level and above (i.e. everything)")
@@ -117,6 +119,79 @@ func main() {
 
 	// Show test options
 	logging.Logger.Debug("Options: %+v", &opts)
+
+	// Print all parameter values for debugging
+	logging.Logger.Debug("========================================")
+	logging.Logger.Debug("Load Test Configuration Parameters:")
+	logging.Logger.Debug("========================================")
+
+	logging.Logger.Debug("General Configuration:")
+	logging.Logger.Debug("  Stage: %v", opts.Stage)
+	logging.Logger.Debug("  RunPrefix: %s", opts.RunPrefix)
+	logging.Logger.Debug("  OutputDir: %s", opts.OutputDir)
+	logging.Logger.Debug("  Concurrency: %d", opts.Concurrency)
+	logging.Logger.Debug("  FailFast: %v", opts.FailFast)
+
+	logging.Logger.Debug("Component/Application Configuration:")
+	logging.Logger.Debug("  ApplicationsCount: %d", opts.ApplicationsCount)
+	logging.Logger.Debug("  ComponentsCount: %d", opts.ComponentsCount)
+	logging.Logger.Debug("  ComponentRepoUrl: %s", opts.ComponentRepoUrl)
+	logging.Logger.Debug("  ComponentRepoRevision: %s", opts.ComponentRepoRevision)
+	logging.Logger.Debug("  ComponentContainerFile: %s", opts.ComponentContainerFile)
+	logging.Logger.Debug("  ComponentContainerContext: %s", opts.ComponentContainerContext)
+	logging.Logger.Debug("  ForkTarget: %s", opts.ForkTarget)
+	logging.Logger.Debug("  QuayRepo: %s", opts.QuayRepo)
+
+	logging.Logger.Debug("Build Pipeline Configuration:")
+	logging.Logger.Debug("  BuildPipelineName: %s", opts.BuildPipelineName)
+	logging.Logger.Debug("  BuildPipelineSelectorBundle: %s", opts.BuildPipelineSelectorBundle)
+	logging.Logger.Debug("  BuildPlatforms: %s", opts.BuildPlatforms)
+	logging.Logger.Debug("  PipelineMintmakerDisabled: %v", opts.PipelineMintmakerDisabled)
+
+	logging.Logger.Debug("Pipeline Repo Templating Configuration:")
+	logging.Logger.Debug("  PipelineRepoTemplating: %v", opts.PipelineRepoTemplating)
+	logging.Logger.Debug("  PipelineRepoTemplatingSource: %s", opts.PipelineRepoTemplatingSource)
+	logging.Logger.Debug("  PipelineRepoTemplatingSourceDir: %s", opts.PipelineRepoTemplatingSourceDir)
+	logging.Logger.Debug("  PipelineImagePullSecrets: %v", opts.PipelineImagePullSecrets)
+
+	logging.Logger.Debug("Test Scenario Configuration:")
+	logging.Logger.Debug("  TestScenarioGitURL: %s", opts.TestScenarioGitURL)
+	logging.Logger.Debug("  TestScenarioRevision: %s", opts.TestScenarioRevision)
+	logging.Logger.Debug("  TestScenarioPathInRepo: %s", opts.TestScenarioPathInRepo)
+
+	logging.Logger.Debug("Release Configuration:")
+	logging.Logger.Debug("  ReleasePolicy: %s", opts.ReleasePolicy)
+	logging.Logger.Debug("  ReleasePipelineUrl: %s", opts.ReleasePipelineUrl)
+	logging.Logger.Debug("  ReleasePipelineRevision: %s", opts.ReleasePipelineRevision)
+	logging.Logger.Debug("  ReleasePipelinePath: %s", opts.ReleasePipelinePath)
+	logging.Logger.Debug("  ReleasePipelineServiceAccount: %s", opts.ReleasePipelineServiceAccount)
+
+	logging.Logger.Debug("Journey Configuration:")
+	logging.Logger.Debug("  JourneyDuration: %s", opts.JourneyDuration)
+	logging.Logger.Debug("  JourneyUntil: %s", opts.JourneyUntil)
+	logging.Logger.Debug("  JourneyRepeats: %d", opts.JourneyRepeats)
+	logging.Logger.Debug("  JourneyReuseApplications: %v", opts.JourneyReuseApplications)
+	logging.Logger.Debug("  JourneyReuseComponents: %v", opts.JourneyReuseComponents)
+
+	logging.Logger.Debug("Wait Configuration:")
+	logging.Logger.Debug("  WaitPipelines: %v", opts.WaitPipelines)
+	logging.Logger.Debug("  WaitIntegrationTestsPipelines: %v", opts.WaitIntegrationTestsPipelines)
+	logging.Logger.Debug("  WaitRelease: %v", opts.WaitRelease)
+
+	logging.Logger.Debug("Timing Configuration:")
+	logging.Logger.Debug("  StartupDelay: %s", opts.StartupDelay)
+	logging.Logger.Debug("  StartupJitter: %s", opts.StartupJitter)
+	logging.Logger.Debug("  SerializeComponentOnboarding: %v", opts.SerializeComponentOnboarding)
+
+	logging.Logger.Debug("Cleanup Configuration:")
+	logging.Logger.Debug("  Purge: %v", opts.Purge)
+	logging.Logger.Debug("  PurgeOnly: %v", opts.PurgeOnly)
+
+	logging.Logger.Debug("Logging Configuration:")
+	logging.Logger.Debug("  LogInfo: %v", opts.LogInfo)
+	logging.Logger.Debug("  LogDebug: %v", opts.LogDebug)
+	logging.Logger.Debug("  LogTrace: %v", opts.LogTrace)
+	logging.Logger.Debug("========================================")
 
 	// Tier up measurements logger
 	logging.MeasurementsStart(opts.OutputDir)

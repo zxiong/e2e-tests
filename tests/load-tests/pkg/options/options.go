@@ -10,7 +10,9 @@ import "sync"
 // Struct to hold command line options
 type Opts struct {
 	ApplicationsCount                int
+	BuildPipelineName                string
 	BuildPipelineSelectorBundle      string
+	BuildPlatforms                   string
 	ComponentContainerContext        string
 	ComponentContainerFile           string
 	ComponentRepoRevision            string
@@ -57,6 +59,11 @@ type Opts struct {
 
 // Pre-process load-test options before running the test
 func (o *Opts) ProcessOptions() error {
+	// Set default for BuildPipelineName if not provided
+	if o.BuildPipelineName == "" {
+		o.BuildPipelineName = "docker-build"
+	}
+
 	// Parse '--journey-duration' and populate JourneyUntil
 	parsed, err := time.ParseDuration(o.JourneyDuration)
 	if err != nil {
