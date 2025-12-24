@@ -13,8 +13,13 @@ if type loadtest &>/dev/null; then
     cmd="loadtest"
     echo "Running loadtest from $( type -p loadtest ) binary"
 else
+    # Use memory-efficient flags for 'go run' to avoid OOM
+    # GOMAXPROCS=1: Single-threaded Go runtime (less memory)
+    # -p=1: Serial package compilation instead of parallel (30-40% less memory)
+    export GOMAXPROCS=1
+    export GOFLAGS="-p=1"
     cmd="go run loadtest.go"
-    echo "Running loadtest from $( pwd ) with '$cmd' command"
+    echo "Running loadtest from $( pwd ) with '$cmd' command (memory-efficient mode)"
 fi
 
 date -Ins --utc >started
