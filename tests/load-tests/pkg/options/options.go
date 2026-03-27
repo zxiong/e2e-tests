@@ -9,10 +9,12 @@ import "sync"
 
 // Struct to hold command line options
 type Opts struct {
+	ApplicationName                  string
 	ApplicationsCount                int
 	BuildPipelineSelectorBundle      string
 	ComponentContainerContext        string
 	ComponentContainerFile           string
+	ComponentName                    string
 	ComponentRepoRevision            string
 	ComponentRepoUrl                 string
 	ComponentsCount                  int
@@ -45,6 +47,7 @@ type Opts struct {
 	RunPrefix                        string
 	SerializeComponentOnboarding     bool
 	SerializeComponentOnboardingLock sync.Mutex
+	SpecFilePath                     string
 	Stage                            bool
 	StartupDelay                     time.Duration
 	StartupJitter                    time.Duration

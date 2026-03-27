@@ -33,6 +33,8 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.Flags().StringVar(&opts.ApplicationName, "application-name", "", "custom application name (if empty, a name will be generated)")
+	rootCmd.Flags().StringVar(&opts.ComponentName, "component-name", "", "custom component name (if empty, a name will be generated)")
 	rootCmd.Flags().StringVar(&opts.ComponentRepoUrl, "component-repo", "https://github.com/nodeshift-starters/devfile-sample", "the component repo URL to be used")
 	rootCmd.Flags().IntVar(&opts.ApplicationsCount, "applications-count", 1, "number of applications to create per user")
 	rootCmd.Flags().IntVar(&opts.ComponentsCount, "components-count", 1, "number of components to create per application")
@@ -43,6 +45,7 @@ func init() {
 	rootCmd.Flags().StringVar(&opts.QuayRepo, "quay-repo", "redhat-user-workloads-stage", "the target quay repo for PaC templated image pushes")
 	rootCmd.Flags().StringVar(&opts.RunPrefix, "runprefix", "testuser", "identifier used for prefix of usersignup names and as suffix when forking repo")
 	rootCmd.Flags().BoolVar(&opts.SerializeComponentOnboarding, "serialize-component-onboarding", false, "should we serialize creation and onboarding of a component (wait will not affect measurement)")
+	rootCmd.Flags().StringVar(&opts.SpecFilePath, "spec-file-path", "", "path to RPM spec file in repo to update Release field in PaC PR (e.g., \"mypackage.spec\")")
 	rootCmd.Flags().BoolVarP(&opts.Stage, "stage", "s", false, "is you want to run the test on stage")
 	rootCmd.Flags().DurationVar(&opts.StartupDelay, "startup-delay", 0, "when starting per user/per application/per client treads, wait for this duration")
 	rootCmd.Flags().DurationVar(&opts.StartupJitter, "startup-jitter", 3*time.Second, "when applying startup delay, add or remove half of jitter with this maximum value")

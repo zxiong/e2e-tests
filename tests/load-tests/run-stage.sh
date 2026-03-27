@@ -19,8 +19,10 @@ fi
 
 date -Ins --utc >started
 $cmd \
+    --application-name "${APPLICATION_NAME:-}" \
     --applications-count "${APPLICATIONS_COUNT:-1}" \
     --build-pipeline-selector-bundle "${BUILD_PIPELINE_SELECTOR_BUNDLE:-}" \
+    --component-name "${COMPONENT_NAME:-}" \
     --component-repo "${COMPONENT_REPO:-https://github.com/devfile-samples/devfile-sample-code-with-quarkus}" \
     --component-repo-revision "${COMPONENT_REPO_REVISION:-main}" \
     --components-count "${COMPONENTS_COUNT:-1}" \
@@ -45,6 +47,7 @@ $cmd \
     --release-ociStorage "${OCI_STORAGE:-quay.io/rhtap-test-local/perf-release-service-trusted-artifacts}" \
     --release-pipeline-service-account "${RELEASE_PIPELINE_SERVICE_ACCOUNT:-release-serviceaccount}" \
     --runprefix "${USER_PREFIX:-undef}" \
+    --spec-file-path "${SPEC_FILE_PATH:-}" \
     --waitintegrationtestspipelines="${WAIT_INTEGRATION_TESTS:-true}" \
     --waitpipelines="${WAIT_PIPELINES:-true}" \
     --waitrelease="${WAIT_RELEASE:-true}" \

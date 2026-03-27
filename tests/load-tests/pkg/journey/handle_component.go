@@ -84,8 +84,13 @@ func getPaCPull(annotations map[string]string) (string, error) {
 	}
 }
 
-func createComponent(f *framework.Framework, namespace, repoUrl, repoRevision, containerContext, containerFile, buildPipelineSelector, appName string, componentIndex int, mintmakerDisabled bool) (string, error) {
-	name := fmt.Sprintf("%s-comp-%d", appName, componentIndex)
+func createComponent(f *framework.Framework, namespace, repoUrl, repoRevision, containerContext, containerFile, buildPipelineSelector, appName string, componentIndex int, mintmakerDisabled bool, customName string) (string, error) {
+	var name string
+	if customName != "" {
+		name = customName
+	} else {
+		name = fmt.Sprintf("%s-comp-%d", appName, componentIndex)
+	}
 
 	logging.Logger.Debug("Creating component %s in namespace %s", name, namespace)
 
@@ -368,6 +373,80 @@ func checkImageRepositoryCreatedBeforePR(ctx *types.PerComponentContext, mergeRe
 	return nil
 }
 
+// updateSpecFileRelease updates the Release field in the spec file in the PR branch
+func updateSpecFileRelease(f *framework.Framework, repoUrl string, mergeRequestNumber int, specFilePath string) error {
+	repoName, err := getRepoNameFromRepoUrl(repoUrl)
+	if err != nil {
+		return fmt.Errorf("failed to get repo name from URL: %v", err)
+	}
+
+	// Generate unique release value using timestamp (seconds)
+	releaseValue := fmt.Sprintf("%d", time.Now().Unix())
+
+	var sourceBranch string
+	var fileContent string
+
+	if strings.Contains(repoUrl, "gitlab.") {
+		repoId, err := getRepoIdFromRepoUrl(repoUrl)
+		if err != nil {
+			return fmt.Errorf("failed to get repo ID from URL: %v", err)
+		}
+
+		// Get the MR to find source branch
+		mr, err := f.AsKubeAdmin.CommonController.Gitlab.GetMergeRequest(repoId, mergeRequestNumber)
+		if err != nil {
+			return fmt.Errorf("failed to get MR %d: %v", mergeRequestNumber, err)
+		}
+		sourceBranch = mr.SourceBranch
+
+		// Get current spec file content
+		fileContent, err = f.AsKubeAdmin.CommonController.Gitlab.GetFile(repoId, specFilePath, sourceBranch)
+		if err != nil {
+			return fmt.Errorf("failed to get spec file %s from branch %s: %v", specFilePath, sourceBranch, err)
+		}
+
+		// Replace Release line
+		releaseRegex := regexp.MustCompile(`(?m)^Release:\s*.*$`)
+		newContent := releaseRegex.ReplaceAllString(fileContent, fmt.Sprintf("Release: %s%%{?dist}", releaseValue))
+
+		// Update file on the source branch
+		_, err = f.AsKubeAdmin.CommonController.Gitlab.UpdateFile(repoId, specFilePath, newContent, sourceBranch)
+		if err != nil {
+			return fmt.Errorf("failed to update spec file %s in MR branch %s: %v", specFilePath, sourceBranch, err)
+		}
+	} else {
+		// Get the PR to find source branch
+		pr, err := f.AsKubeAdmin.CommonController.Github.GetPullRequest(repoName, mergeRequestNumber)
+		if err != nil {
+			return fmt.Errorf("failed to get PR %d: %v", mergeRequestNumber, err)
+		}
+		sourceBranch = *pr.Head.Ref
+
+		// Get current spec file content
+		fileResponse, err := f.AsKubeAdmin.CommonController.Github.GetFile(repoName, specFilePath, sourceBranch)
+		if err != nil {
+			return fmt.Errorf("failed to get spec file %s from branch %s: %v", specFilePath, sourceBranch, err)
+		}
+		fileContent, err = fileResponse.GetContent()
+		if err != nil {
+			return fmt.Errorf("failed to decode spec file content: %v", err)
+		}
+
+		// Replace Release line
+		releaseRegex := regexp.MustCompile(`(?m)^Release:\s*.*$`)
+		newContent := releaseRegex.ReplaceAllString(fileContent, fmt.Sprintf("Release: %s%%{?dist}", releaseValue))
+
+		// Update file on the source branch
+		_, err = f.AsKubeAdmin.CommonController.Github.UpdateFile(repoName, specFilePath, newContent, sourceBranch, *fileResponse.SHA)
+		if err != nil {
+			return fmt.Errorf("failed to update spec file %s in PR branch %s: %v", specFilePath, sourceBranch, err)
+		}
+	}
+
+	logging.Logger.Debug("Updated spec file %s Release to %s in PR/MR %d branch %s", specFilePath, releaseValue, mergeRequestNumber, sourceBranch)
+	return nil
+}
+
 func HandleComponent(ctx *types.PerComponentContext) error {
 	if ctx.ParentContext.ParentContext.Opts.JourneyReuseComponents && ctx.ParentContext.JourneyRepeatIndex > 0 {
 		// This is a reused component. We need to get the name from the component from the first journey.
@@ -428,6 +507,7 @@ func HandleComponent(ctx *types.PerComponentContext) error {
 		ctx.ParentContext.ApplicationName,
 		ctx.ComponentIndex,
 		ctx.ParentContext.ParentContext.Opts.PipelineMintmakerDisabled,
+		ctx.ParentContext.ParentContext.Opts.ComponentName,
 	)
 	if err != nil {
 		return logging.Logger.Fail(61, "Component failed creation: %v", err)
@@ -493,6 +573,21 @@ func HandleComponent(ctx *types.PerComponentContext) error {
 		return logging.Logger.Fail(67, "Creation time check failed for IR and PR: %v", err)
 	}
 
+	// Update spec file Release field in PR branch if specified
+	if ctx.ParentContext.ParentContext.Opts.SpecFilePath != "" {
+		_, err = logging.Measure(
+			ctx,
+			updateSpecFileRelease,
+			ctx.Framework,
+			ctx.ParentContext.ParentContext.ComponentRepoUrl,
+			mergeRequestNumber,
+			ctx.ParentContext.ParentContext.Opts.SpecFilePath,
+		)
+		if err != nil {
+			return logging.Logger.Fail(68, "Failed to update spec file Release in PR branch: %v", err)
+		}
+	}
+
 	// If this is supposed to be a multi-arch build, we do not care about
 	// current build, we just merge the PR, update pipelines and trigger
 	// actual multi-arch build
@@ -523,7 +618,7 @@ func HandleComponent(ctx *types.PerComponentContext) error {
 			placeholders,
 		)
 		if err != nil {
-			return logging.Logger.Fail(68, "Repo-templating workflow component cleanup failed: %v", err)
+			return logging.Logger.Fail(69, "Repo-templating workflow component cleanup failed: %v", err)
 		}
 
 	}

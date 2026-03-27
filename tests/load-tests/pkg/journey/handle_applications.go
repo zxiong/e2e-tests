@@ -11,8 +11,13 @@ import utils "github.com/konflux-ci/e2e-tests/pkg/utils"
 
 import util "github.com/devfile/library/v2/pkg/util"
 
-func createApplication(f *framework.Framework, namespace string, runPrefix string) (string, error) {
-	name := fmt.Sprintf("%s-app-%s", runPrefix, util.GenerateRandomString(5))
+func createApplication(f *framework.Framework, namespace string, runPrefix string, customName string) (string, error) {
+	var name string
+	if customName != "" {
+		name = customName
+	} else {
+		name = fmt.Sprintf("%s-app-%s", runPrefix, util.GenerateRandomString(5))
+	}
 
 	logging.Logger.Debug("Creating application %s in namespace %s", name, namespace)
 
@@ -85,6 +90,7 @@ func HandleApplication(ctx *types.PerApplicationContext) error {
 		ctx.Framework,
 		ctx.ParentContext.Namespace,
 		ctx.ParentContext.Opts.RunPrefix,
+		ctx.ParentContext.Opts.ApplicationName,
 	)
 	if err != nil {
 		return logging.Logger.Fail(30, "Application failed creation: %v", err)
